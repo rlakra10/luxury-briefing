@@ -10,14 +10,21 @@ from curated_windows import curated_watch_windows
 from db import get_db
 from models import Signal, SavedSignal
 
+import os
+
+from db import Base, engine
+import models  # ensures tables are registered
+
+
 app = FastAPI(title="Luxury Briefing API")
+
+origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+).split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=[o.strip() for o in origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,6 +40,11 @@ def health():
 def themes(db: Session = Depends(get_db)):
     rows = db.query(Signal.theme).distinct().order_by(Signal.theme).all()
     return ["All"] + [r[0] for r in rows]
+
+
+@app.on_event("startup")
+def _startup():
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/signals")

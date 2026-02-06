@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    container_name: luxury_db
+    environment:
+      POSTGRES_DB: luxury_briefing
+      POSTGRES_USER: luxury
+      POSTGRES_PASSWORD: luxury
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./backend
+    container_name: luxury_api
+    environment:
+      DATABASE_URL: postgresql+psycopg://luxury:luxury@db:5432/luxury_briefing
+      CORS_ORIGINS: http://localhost:5173
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: ./frontend
+    container_name: luxury_web
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    depends_on:
+      - api
+    ports:
+      - "5173:5173"
+
+volumes:
+  pgdata:
