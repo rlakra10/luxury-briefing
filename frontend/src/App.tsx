@@ -195,33 +195,7 @@ export default function App() {
     }
   }
 
-  function filterEventsByTab(all: EventItem[], tab: MainTab) {
-    const lower = (x: string) => (x || "").toLowerCase();
-    const blob = (e: EventItem) => `${e.title} ${e.house} ${e.location} ${e.url}`.toLowerCase();
 
-    const isAuctiony = (e: EventItem) =>
-      ["auction", "sale", "buy/auction", "lots"].some((k) => blob(e).includes(k));
-
-    const isShowy = (e: EventItem) =>
-      ["exhibition", "preview", "show", "fair", "opening"].some((k) => blob(e).includes(k));
-
-    const byDate = (a: EventItem, b: EventItem) =>
-      (a.start_date || "9999-12-31").localeCompare(b.start_date || "9999-12-31");
-
-    if (tab === "radar") {
-      // Wealth Radar: show auction/sale-heavy events
-      return all.filter(isAuctiony).sort(byDate);
-    }
-
-    if (tab === "moves") {
-      // Hidden Moves: exhibition/preview/fair/show
-      // (will be smaller until we add more "show" sources)
-      return all.filter(isShowy).sort(byDate);
-    }
-
-    // Concierge Edge: shortlist of next 10 upcoming (across all)
-    return [...all].sort(byDate).slice(0, 10);
-  }
 
   const filteredEvents = useMemo(() => {
     const byDate = (a: EventItem, b: EventItem) =>
