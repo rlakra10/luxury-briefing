@@ -1,0 +1,31 @@
+# OS
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node / React
+node_modules/
+dist/
+build/
+.vite/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Local DB / misc
+*.sqlite
