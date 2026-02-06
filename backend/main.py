@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, case
 from ingest import ingest_rss
 from events_scrape import fetch_events
+from curated_windows import curated_watch_windows
+
 
 from db import get_db
 from models import Signal, SavedSignal
@@ -21,20 +23,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 @app.get("/themes")
 def themes(db: Session = Depends(get_db)):
     rows = db.query(Signal.theme).distinct().order_by(Signal.theme).all()
     return ["All"] + [r[0] for r in rows]
 
+
 @app.get("/signals")
 def signals(
     theme: str | None = None,
     q: str | None = None,
-    sort: str | None = None,   # <-- NEW
+    sort: str | None = None,  # <-- NEW
     db: Session = Depends(get_db),
 ):
     query = db.query(Signal)
@@ -79,6 +84,7 @@ def signals(
         for r in rows
     ]
 
+
 @app.get("/saved")
 def list_saved(db: Session = Depends(get_db)):
     rows = (
@@ -102,6 +108,7 @@ def list_saved(db: Session = Depends(get_db)):
         for r in rows
     ]
 
+
 @app.post("/save/{signal_id}")
 def save_signal(signal_id: str, db: Session = Depends(get_db)):
     s = db.get(Signal, signal_id)
@@ -116,6 +123,7 @@ def save_signal(signal_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "saved": True}
 
+
 @app.delete("/save/{signal_id}")
 def unsave_signal(signal_id: str, db: Session = Depends(get_db)):
     existing = db.get(SavedSignal, signal_id)
@@ -126,10 +134,21 @@ def unsave_signal(signal_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "saved": False}
 
+
 @app.post("/ingest")
 def ingest(db: Session = Depends(get_db)):
     return ingest_rss(db)
 
+
 @app.get("/events")
 def events(days: int = 90):
     return fetch_events(days=days)
+
+
+@app.get("/events/curated")
+def events_curated():
+    return {
+        "ok": True,
+        "count": len(curated_watch_windows()),
+        "events": curated_watch_windows(),
+    }

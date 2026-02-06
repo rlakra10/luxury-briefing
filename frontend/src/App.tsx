@@ -63,16 +63,32 @@ export default function App() {
     setEventsError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/events?days=90`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setEvents(Array.isArray(data?.events) ? data.events : []);
+      const [r1, r2] = await Promise.all([
+        fetch(`${API_BASE}/events?days=90`),
+        fetch(`${API_BASE}/events/curated`),
+      ]);
+
+      if (!r1.ok) throw new Error(`HTTP ${r1.status} (events)`);
+      if (!r2.ok) throw new Error(`HTTP ${r2.status} (curated)`);
+
+      const d1 = await r1.json();
+      const d2 = await r2.json();
+
+      const a1: EventItem[] = Array.isArray(d1?.events) ? d1.events : [];
+      const a2: EventItem[] = Array.isArray(d2?.events) ? d2.events : [];
+
+      // merge + dedupe by id
+      const map = new Map<string, EventItem>();
+      [...a1, ...a2].forEach((e) => map.set(e.id, e));
+
+      setEvents(Array.from(map.values()));
     } catch (e: unknown) {
       setEventsError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setEventsLoading(false);
     }
   }
+
 
   type MainTab = "moves" | "radar" | "edge";
   type SubView = "feed" | "events";
@@ -217,7 +233,17 @@ export default function App() {
     if (tab === "moves") return [...events].filter(isShowy).sort(byDate);
 
     // edge: shortlist of next 10 upcoming across ALL
-    return [...events].sort(byDate).slice(0, 10);
+    // Concierge Edge: balanced shortlist (5 auctions + 5 moves)
+    const auctions = [...events].filter(isAuctiony).sort(byDate).slice(0, 5);
+    const moves = [...events].filter(isShowy).sort(byDate).slice(0, 5);
+
+    // merge, keep order, dedupe by id
+    const map = new Map<string, EventItem>();
+    [...moves, ...auctions].forEach((e) => map.set(e.id, e));
+
+    // final shortlist sorted by date (so timeline stays clean)
+    return Array.from(map.values()).sort(byDate).slice(0, 10);
+
   }, [events, tab]);
 
 
