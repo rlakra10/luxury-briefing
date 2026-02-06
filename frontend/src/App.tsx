@@ -427,36 +427,7 @@ export default function App() {
 
 
 
-      {subView === "events" && (
-        <div className="timeline">
-          {eventsLoading && <div className="state">Loading watch windows…</div>}
-          {eventsError && <div className="state error">Error: {eventsError}</div>}
 
-          {!eventsLoading && !eventsError && events.length === 0 && (
-            <div className="state">No watch windows found.</div>
-          )}
-
-          {!eventsLoading &&
-            !eventsError &&
-            events.map((ev) => (
-              <div className="eventRow" key={ev.id}>
-                <div className="eventDate">{ev.start_date || "—"}</div>
-
-                <div className="eventBody">
-                  <div className="eventTitle">{ev.title}</div>
-                  <div className="eventMeta">
-                    {ev.house}
-                    {ev.location ? ` • ${ev.location}` : ""}
-                  </div>
-                </div>
-
-                <a className="eventLink" href={ev.url} target="_blank" rel="noreferrer">
-                  Open
-                </a>
-              </div>
-            ))}
-        </div>
-      )}
 
 
 
