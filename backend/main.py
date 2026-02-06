@@ -5,6 +5,8 @@ from sqlalchemy import or_, case
 from ingest import ingest_rss
 from events_scrape import fetch_events
 from curated_windows import curated_watch_windows
+from db import Base, engine
+import models  # registers tables
 
 
 from db import get_db
@@ -119,6 +121,11 @@ def list_saved(db: Session = Depends(get_db)):
         }
         for r in rows
     ]
+
+
+@app.on_event("startup")
+def _startup():
+    Base.metadata.create_all(bind=engine)
 
 
 @app.post("/save/{signal_id}")
