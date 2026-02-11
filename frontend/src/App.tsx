@@ -23,7 +23,6 @@ type EventItem = {
   url: string;
 };
 
-
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
 function buildSignalsUrl(theme: string, q: string, sort: string) {
@@ -58,6 +57,19 @@ export default function App() {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
 
+  // ✅ real Light / Dark mode
+  const [uiTheme, setUiTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.add("theme-switching");
+    root.dataset.theme = uiTheme;
+
+    const t = window.setTimeout(() => root.classList.remove("theme-switching"), 250);
+    return () => window.clearTimeout(t);
+  }, [uiTheme]);
+
+
   async function loadEvents() {
     setEventsLoading(true);
     setEventsError(null);
@@ -77,10 +89,8 @@ export default function App() {
       const a1: EventItem[] = Array.isArray(d1?.events) ? d1.events : [];
       const a2: EventItem[] = Array.isArray(d2?.events) ? d2.events : [];
 
-      // merge + dedupe by id
       const map = new Map<string, EventItem>();
       [...a1, ...a2].forEach((e) => map.set(e.id, e));
-
       setEvents(Array.from(map.values()));
     } catch (e: unknown) {
       setEventsError(e instanceof Error ? e.message : "Unknown error");
@@ -88,7 +98,6 @@ export default function App() {
       setEventsLoading(false);
     }
   }
-
 
   type MainTab = "moves" | "radar" | "edge";
   type SubView = "feed" | "events";
@@ -101,9 +110,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subView]);
 
-
-
-  // Load themes ONCE
   useEffect(() => {
     fetch(`${API_BASE}/themes`)
       .then((r) => r.json())
@@ -111,7 +117,6 @@ export default function App() {
       .catch(() => setThemes(["All"]));
   }, []);
 
-  // Load saved list ONCE (for button state)
   useEffect(() => {
     fetch(`${API_BASE}/saved`)
       .then((r) => r.json())
@@ -122,21 +127,17 @@ export default function App() {
       .catch(() => setSavedIds(new Set()));
   }, []);
 
-  // Live typing debounce -> q
   useEffect(() => {
     const t = setTimeout(() => setQ(qInput), 250);
     return () => clearTimeout(t);
   }, [qInput]);
 
-  // Fetch signals for current view
   useEffect(() => {
     setLoading(true);
     setError(null);
 
     const url =
-      view === "vault"
-        ? `${API_BASE}/saved`
-        : buildSignalsUrl(theme, q, sort);
+      view === "vault" ? `${API_BASE}/saved` : buildSignalsUrl(theme, q, sort);
 
     fetch(url)
       .then((r) => {
@@ -175,7 +176,6 @@ export default function App() {
         return next;
       });
 
-      // If in Vault and you unsave, remove card immediately
       if (view === "vault" && isSaved) {
         setSignals((prev) => prev.filter((s) => s.id !== id));
         if (selected?.id === id) setSelected(null);
@@ -194,11 +194,9 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/ingest`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      // After ingest, reload the current view
+
       const url =
-        view === "vault"
-          ? `${API_BASE}/saved`
-          : buildSignalsUrl(theme, q, sort);
+        view === "vault" ? `${API_BASE}/saved` : buildSignalsUrl(theme, q, sort);
 
       const r2 = await fetch(url);
       if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
@@ -210,8 +208,6 @@ export default function App() {
       setRefreshing(false);
     }
   }
-
-
 
   const filteredEvents = useMemo(() => {
     const byDate = (a: EventItem, b: EventItem) =>
@@ -229,29 +225,21 @@ export default function App() {
       );
 
     if (tab === "radar") return [...events].filter(isAuctiony).sort(byDate);
-
     if (tab === "moves") return [...events].filter(isShowy).sort(byDate);
 
-    // edge: shortlist of next 10 upcoming across ALL
-    // Concierge Edge: balanced shortlist (5 auctions + 5 moves)
     const auctions = [...events].filter(isAuctiony).sort(byDate).slice(0, 5);
     const moves = [...events].filter(isShowy).sort(byDate).slice(0, 5);
 
-    // merge, keep order, dedupe by id
     const map = new Map<string, EventItem>();
     [...moves, ...auctions].forEach((e) => map.set(e.id, e));
 
-    // final shortlist sorted by date (so timeline stays clean)
     return Array.from(map.values()).sort(byDate).slice(0, 10);
-
   }, [events, tab]);
-
-
-
-
 
   return (
     <div className="page">
+      <div className="ambient" aria-hidden="true" />
+
       <header className="header">
         <div>
           <h1 className="title">Private Concierge Briefing</h1>
@@ -276,13 +264,34 @@ export default function App() {
             >
               Vault ({savedIds.size})
             </button>
-            <button className="btn" type="button" onClick={refreshFeed} disabled={refreshing}>
+
+            <button
+              className="btn"
+              type="button"
+              onClick={refreshFeed}
+              disabled={refreshing}
+            >
               {refreshing ? "Refreshing…" : "Refresh"}
             </button>
 
+            <button
+              className={`tabBtn ${uiTheme === "dark" ? "active" : ""}`}
+              type="button"
+              onClick={() => setUiTheme("dark")}
+            >
+              Dark
+            </button>
+            <button
+              className={`tabBtn ${uiTheme === "light" ? "active" : ""}`}
+              type="button"
+              onClick={() => setUiTheme("light")}
+            >
+              Light
+            </button>
           </div>
 
           <div className="pill">{resultsLabel}</div>
+
           <div className="tabs">
             <button
               className={`tabBtn ${tab === "moves" ? "active" : ""}`}
@@ -323,11 +332,8 @@ export default function App() {
               Watch Windows
             </button>
           </div>
-
         </div>
       </header>
-
-
 
       {view === "briefing" && (
         <>
@@ -425,12 +431,6 @@ export default function App() {
         </div>
       )}
 
-
-
-
-
-
-
       {error && <div className="state error">Error: {error}</div>}
       {loading && <div className="state">Loading…</div>}
 
@@ -486,7 +486,6 @@ export default function App() {
         </div>
       )}
 
-
       {selected && (
         <div className="drawerOverlay" onClick={() => setSelected(null)}>
           <aside className="drawer" onClick={(e) => e.stopPropagation()}>
@@ -497,11 +496,7 @@ export default function App() {
                 </div>
                 <h2 className="drawerTitle">{selected.title}</h2>
               </div>
-              <button
-                className="drawerClose"
-                onClick={() => setSelected(null)}
-                type="button"
-              >
+              <button className="drawerClose" onClick={() => setSelected(null)} type="button">
                 ✕
               </button>
             </div>
@@ -534,10 +529,8 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   const text = `${selected.title}\n\n${selected.summary}\n\nTheme: ${selected.theme
-                    }\nConfidence: ${Math.round(
-                      selected.confidence * 100
-                    )}%\nSource: ${selected.source}\n${selected.url ? `URL: ${selected.url}` : ""
-                    }`;
+                    }\nConfidence: ${Math.round(selected.confidence * 100)}%\nSource: ${selected.source
+                    }\n${selected.url ? `URL: ${selected.url}` : ""}`;
                   navigator.clipboard.writeText(text);
                 }}
               >
@@ -549,6 +542,4 @@ export default function App() {
       )}
     </div>
   );
-
-
 }
