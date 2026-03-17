@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 type Signal = {
@@ -24,6 +24,7 @@ type EventItem = {
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+const DRAWER_CLOSE_MS = 220;
 
 function buildSignalsUrl(theme: string, q: string, sort: string) {
   const url = new URL(`${API_BASE}/signals`);
@@ -31,6 +32,61 @@ function buildSignalsUrl(theme: string, q: string, sort: string) {
   if (q.trim()) url.searchParams.set("q", q.trim());
   if (sort && sort !== "date") url.searchParams.set("sort", sort);
   return url.toString();
+}
+
+function rarityTone(rarity: string): "rare" | "uncommon" | "common" {
+  const x = rarity.toLowerCase();
+  if (x === "rare") return "rare";
+  if (x === "uncommon") return "uncommon";
+  return "common";
+}
+
+function extractKeywords(text: string, limit = 2) {
+  const stop = new Set([
+    "the", "and", "for", "with", "from", "that", "this", "into", "their", "will",
+    "have", "has", "about", "after", "before", "through", "brand", "luxury",
+    "daily", "news", "new", "its", "over", "than", "more", "less", "just",
+  ]);
+
+  const counts = new Map<string, number>();
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 3 && !stop.has(word))
+    .forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([word]) => word);
+}
+
+function buildDrawerHighlights(signal: Signal) {
+  const terms = extractKeywords(`${signal.title} ${signal.summary}`);
+  const lead = terms.length
+    ? `${terms.join(" / ")} are the dominant signals in this piece.`
+    : "This signal captures a concentrated movement worth monitoring.";
+
+  const impactByTheme: Record<string, string> = {
+    Marketing: "Likely impact: brand visibility, campaign direction, and audience attention.",
+    Finance: "Likely impact: capital flow, pricing confidence, and market positioning.",
+    Design: "Likely impact: aesthetic direction, product storytelling, and desirability.",
+  };
+
+  const rarityLine =
+    signal.rarity === "Rare"
+      ? "This reads as a high-priority outlier rather than routine coverage."
+      : signal.rarity === "Uncommon"
+        ? "This sits above baseline noise and is worth brief monitoring."
+        : "This is a baseline market signal, useful mainly in aggregate.";
+
+  return [
+    lead,
+    impactByTheme[signal.theme] ?? "Likely impact: reputation, demand, and client attention.",
+    `Confidence context: ${Math.round(signal.confidence * 100)}% confidence from current signal scoring.`,
+    rarityLine,
+  ];
 }
 
 export default function App() {
@@ -51,23 +107,66 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Signal | null>(null);
+  const [isDrawerClosing, setIsDrawerClosing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const drawerCloseTimerRef = useRef<number | null>(null);
 
   const [events, setEvents] = useState<EventItem[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
 
-  // ✅ real Light / Dark mode
-  const [uiTheme, setUiTheme] = useState<"dark" | "light">("dark");
-
+  const [uiTheme, setUiTheme] = useState<"dark" | "light">(() => {
+    const saved = window.localStorage.getItem("luxury-briefing-theme");
+    if (saved === "dark" || saved === "light") return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   useEffect(() => {
     const root = document.documentElement;
     root.classList.add("theme-switching");
     root.dataset.theme = uiTheme;
+    window.localStorage.setItem("luxury-briefing-theme", uiTheme);
 
-    const t = window.setTimeout(() => root.classList.remove("theme-switching"), 250);
+    const t = window.setTimeout(() => root.classList.remove("theme-switching"), 520);
     return () => window.clearTimeout(t);
   }, [uiTheme]);
+
+  useEffect(() => {
+    return () => {
+      if (drawerCloseTimerRef.current !== null) {
+        window.clearTimeout(drawerCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeDrawer();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, isDrawerClosing]);
+
+  function openDrawer(signal: Signal) {
+    if (drawerCloseTimerRef.current !== null) {
+      window.clearTimeout(drawerCloseTimerRef.current);
+      drawerCloseTimerRef.current = null;
+    }
+
+    setIsDrawerClosing(false);
+    setSelected(signal);
+  }
+
+  function closeDrawer() {
+    if (!selected || isDrawerClosing) return;
+
+    setIsDrawerClosing(true);
+    drawerCloseTimerRef.current = window.setTimeout(() => {
+      setSelected(null);
+      setIsDrawerClosing(false);
+      drawerCloseTimerRef.current = null;
+    }, DRAWER_CLOSE_MS);
+  }
 
 
   async function loadEvents() {
@@ -178,7 +277,7 @@ export default function App() {
 
       if (view === "vault" && isSaved) {
         setSignals((prev) => prev.filter((s) => s.id !== id));
-        if (selected?.id === id) setSelected(null);
+        if (selected?.id === id) closeDrawer();
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
@@ -236,272 +335,367 @@ export default function App() {
     return Array.from(map.values()).sort(byDate).slice(0, 10);
   }, [events, tab]);
 
+  const drawerHighlights = useMemo(
+    () => (selected ? buildDrawerHighlights(selected) : []),
+    [selected]
+  );
+
   return (
-    <div className="page">
-      <div className="ambient" aria-hidden="true" />
+    <div
+      className={`page state-${view} tab-${tab} subview-${subView}${selected ? " drawer-open" : ""}`}
+    >
+      <div className="ambient" aria-hidden="true">
+        <span className="ambientLayer ambientField" />
+        <span className="ambientLayer ambientMesh" />
+      </div>
 
       <header className="header">
-        <div>
+        <div className="headerBrand">
           <h1 className="title">Private Concierge Briefing</h1>
           <p className="subtitle">Database-backed feed</p>
         </div>
-
-        <div className="right">
-          <div className="pill">Postgres + API</div>
-
-          <div className="tabs">
-            <button
-              className={`tab ${view === "briefing" ? "active" : ""}`}
-              onClick={() => setView("briefing")}
-              type="button"
-            >
-              Briefing
-            </button>
-            <button
-              className={`tab ${view === "vault" ? "active" : ""}`}
-              onClick={() => setView("vault")}
-              type="button"
-            >
-              Vault ({savedIds.size})
-            </button>
-
-            <button
-              className="btn"
-              type="button"
-              onClick={refreshFeed}
-              disabled={refreshing}
-            >
-              {refreshing ? "Refreshing…" : "Refresh"}
-            </button>
-
-            <button
-              className={`tabBtn ${uiTheme === "dark" ? "active" : ""}`}
-              type="button"
-              onClick={() => setUiTheme("dark")}
-            >
-              Dark
-            </button>
-            <button
-              className={`tabBtn ${uiTheme === "light" ? "active" : ""}`}
-              type="button"
-              onClick={() => setUiTheme("light")}
-            >
-              Light
-            </button>
-          </div>
-
-          <div className="pill">{resultsLabel}</div>
-
-          <div className="tabs">
-            <button
-              className={`tabBtn ${tab === "moves" ? "active" : ""}`}
-              type="button"
-              onClick={() => setTab("moves")}
-            >
-              Hidden Moves
-            </button>
-            <button
-              className={`tabBtn ${tab === "radar" ? "active" : ""}`}
-              type="button"
-              onClick={() => setTab("radar")}
-            >
-              Wealth Radar
-            </button>
-            <button
-              className={`tabBtn ${tab === "edge" ? "active" : ""}`}
-              type="button"
-              onClick={() => setTab("edge")}
-            >
-              Concierge Edge
-            </button>
-          </div>
-
-          <div className="tabs">
-            <button
-              className={`tabBtn ${subView === "feed" ? "active" : ""}`}
-              type="button"
-              onClick={() => setSubView("feed")}
-            >
-              Feed
-            </button>
-            <button
-              className={`tabBtn ${subView === "events" ? "active" : ""}`}
-              type="button"
-              onClick={() => setSubView("events")}
-            >
-              Watch Windows
-            </button>
-          </div>
-        </div>
       </header>
 
-      {view === "briefing" && (
-        <>
-          <section className="controls">
-            <label className="control">
-              <span className="controlLabel">Theme</span>
-              <select
-                className="select"
-                value={theme}
-                onChange={(e) => setTheme(e.target.value)}
-              >
-                {themes.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
+      <div className="contentShell">
+        <main className="contentMain">
+          {view === "briefing" && (
+            <>
+              <section className="topSearch">
+                <label className="control grow">
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="Search signals…"
+                    aria-label="Search signals"
+                    value={qInput}
+                    onChange={(e) => setQInput(e.target.value)}
+                  />
+                </label>
 
-            <label className="control">
-              <span className="controlLabel">Sort</span>
-              <select
-                className="select"
-                value={sort}
-                onChange={(e) => setSort(e.target.value as any)}
-              >
-                <option value="date">Newest</option>
-                <option value="confidence">Confidence</option>
-                <option value="rarity">Rarity</option>
-              </select>
-            </label>
+                <button className="btn topSearchBtn" onClick={() => setQ(qInput)} type="button">
+                  Search
+                </button>
+              </section>
 
-            <label className="control grow">
-              <span className="controlLabel">Search</span>
-              <input
-                className="input"
-                type="text"
-                placeholder="Search signals…"
-                value={qInput}
-                onChange={(e) => setQInput(e.target.value)}
-              />
-            </label>
-
-            <button className="btn" onClick={() => setQ(qInput)} type="button">
-              Search
-            </button>
-          </section>
-
-          <div className="statusLine">
-            Showing <strong>{resultsLabel}</strong> • Sort: <strong>{sort}</strong>
-            {theme !== "All" ? (
-              <>
-                {" "}
-                • Theme: <strong>{theme}</strong>
-              </>
-            ) : null}
-            {q.trim() ? (
-              <>
-                {" "}
-                • Query: <strong>{q.trim()}</strong>
-              </>
-            ) : null}
-          </div>
-        </>
-      )}
-
-      {subView === "events" && (
-        <div className="timeline">
-          {eventsLoading && <div className="state">Loading watch windows…</div>}
-          {eventsError && <div className="state error">Error: {eventsError}</div>}
-
-          {!eventsLoading && !eventsError && filteredEvents.length === 0 && (
-            <div className="state">No watch windows for this tab yet.</div>
+              <div className="statusLine">
+                Showing <strong>{resultsLabel}</strong> • Sort: <strong>{sort}</strong>
+                {theme !== "All" ? (
+                  <>
+                    {" "}
+                    • Theme: <strong>{theme}</strong>
+                  </>
+                ) : null}
+                {q.trim() ? (
+                  <>
+                    {" "}
+                    • Query: <strong>{q.trim()}</strong>
+                  </>
+                ) : null}
+              </div>
+            </>
           )}
 
-          {!eventsLoading &&
-            !eventsError &&
-            filteredEvents.map((ev) => (
-              <div className="eventRow" key={ev.id}>
-                <div className="eventDate">{ev.start_date || "—"}</div>
+          {subView === "events" && (
+            <div className="timeline">
+              {eventsLoading && <div className="state">Loading watch windows…</div>}
+              {eventsError && <div className="state error">Error: {eventsError}</div>}
 
-                <div className="eventBody">
-                  <div className="eventTitle">{ev.title}</div>
-                  <div className="eventMeta">
-                    {ev.house}
-                    {ev.location ? ` • ${ev.location}` : ""}
+              {!eventsLoading && !eventsError && filteredEvents.length === 0 && (
+                <div className="state">No watch windows for this tab yet.</div>
+              )}
+
+              {!eventsLoading &&
+                !eventsError &&
+                filteredEvents.map((ev) => (
+                  <div className="eventRow" key={ev.id}>
+                    <div className="eventDate">{ev.start_date || "—"}</div>
+
+                    <div className="eventBody">
+                      <div className="eventTitle">{ev.title}</div>
+                      <div className="eventMeta">
+                        {ev.house}
+                        {ev.location ? ` • ${ev.location}` : ""}
+                      </div>
+                    </div>
+
+                    <a className="eventLink" href={ev.url} target="_blank" rel="noreferrer">
+                      Open
+                    </a>
                   </div>
-                </div>
+                ))}
+            </div>
+          )}
 
-                <a className="eventLink" href={ev.url} target="_blank" rel="noreferrer">
-                  Open
-                </a>
-              </div>
-            ))}
-        </div>
-      )}
+          {error && <div className="state error">Error: {error}</div>}
+          {loading && <div className="state">Loading…</div>}
 
-      {error && <div className="state error">Error: {error}</div>}
-      {loading && <div className="state">Loading…</div>}
+          {subView === "feed" && !loading && !error && (
+            <div className="grid">
+              {signals.map((s) => {
+                const isSaved = savedIds.has(s.id);
+                const busy = savingId === s.id;
+                const tone = rarityTone(s.rarity);
 
-      {subView === "feed" && !loading && !error && (
-        <div className="grid">
-          {signals.map((s, idx) => {
-            const isSaved = savedIds.has(s.id);
-            const busy = savingId === s.id;
-
-            return (
-              <article
-                className={`card ${idx === 0 ? "featured" : ""}`}
-                key={s.id}
-                onClick={() => setSelected(s)}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="cardTop">
-                  <div className="meta">
-                    <span>{s.theme}</span>
-                    <span className="dot">•</span>
-                    <span>{s.rarity}</span>
-                    <span className="dot">•</span>
-                    <span>{s.date}</span>
-                  </div>
-
-                  <button
-                    className={`saveBtn ${isSaved ? "saved" : ""}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleSave(s.id);
+                return (
+                  <article
+                    className={`card rarity-card-${tone}`}
+                    key={s.id}
+                    onClick={() => openDrawer(s)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openDrawer(s);
+                      }
                     }}
-                    disabled={busy}
-                    type="button"
-                    title={isSaved ? "Remove from Vault" : "Save to Vault"}
+                    role="button"
+                    tabIndex={0}
                   >
-                    {busy ? "…" : isSaved ? "Saved" : "Save"}
-                  </button>
-                </div>
+                    <div className="cardTop">
+                      <div className="meta">
+                        <span>{s.theme}</span>
+                        <span className="dot">•</span>
+                        <span className={`rarity rarity-${rarityTone(s.rarity)}`}>
+                          <span className="rarityDot" aria-hidden="true" />
+                          {s.rarity}
+                        </span>
+                        <span className="dot">•</span>
+                        <span>{s.date}</span>
+                      </div>
 
-                <h2 className="cardTitle">{s.title}</h2>
-                <p className="summary">{s.summary}</p>
+                      <button
+                        className={`saveBtn ${isSaved ? "saved" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSave(s.id);
+                        }}
+                        disabled={busy}
+                        type="button"
+                        title={isSaved ? "Remove from Vault" : "Save to Vault"}
+                      >
+                        {busy ? "…" : isSaved ? "Saved" : "Save"}
+                      </button>
+                    </div>
 
-                <div className="footer">
-                  <span className="source">{s.source}</span>
-                  <span className="confidence">
-                    Confidence: {(s.confidence * 100).toFixed(0)}%
-                  </span>
-                </div>
-              </article>
-            );
-          })}
+                    <h2 className="cardTitle">{s.title}</h2>
+                    <p className="summary">{s.summary}</p>
+
+                    <div className="footer">
+                      <span className="source">{s.source}</span>
+                      <span className="confidence">
+                        Confidence: {(s.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </main>
+
+        <aside className="sidebar">
+          <div className="sidebarPanel">
+            <div className="sidebarEyebrow">Controls</div>
+
+            <div className="toolRow toolRowTop">
+              <div className="pill">Postgres + API</div>
+              <div className="pill">{resultsLabel}</div>
+            </div>
+
+            <div className="toolRow">
+              <div className="tabs">
+                <button
+                  className={`tab ${view === "briefing" ? "active" : ""}`}
+                  onClick={() => setView("briefing")}
+                  type="button"
+                >
+                  Briefing
+                </button>
+                <button
+                  className={`tab ${view === "vault" ? "active" : ""}`}
+                  onClick={() => setView("vault")}
+                  type="button"
+                >
+                  Vault ({savedIds.size})
+                </button>
+              </div>
+            </div>
+
+            <div className="toolRow toolRowModes">
+              <button
+                className={`tabBtn ${tab === "moves" ? "active" : ""}`}
+                type="button"
+                onClick={() => setTab("moves")}
+              >
+                Hidden Moves
+              </button>
+              <button
+                className={`tabBtn ${tab === "radar" ? "active" : ""}`}
+                type="button"
+                onClick={() => setTab("radar")}
+              >
+                Wealth Radar
+              </button>
+              <button
+                className={`tabBtn ${tab === "edge" ? "active" : ""}`}
+                type="button"
+                onClick={() => setTab("edge")}
+              >
+                Concierge Edge
+              </button>
+            </div>
+
+            <div className="toolRow">
+              <div className="tabs">
+                <button
+                  className={`tabBtn ${subView === "feed" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setSubView("feed")}
+                >
+                  Feed
+                </button>
+                <button
+                  className={`tabBtn ${subView === "events" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setSubView("events")}
+                >
+                  Watch Windows
+                </button>
+              </div>
+            </div>
+
+            <div className="toolRow">
+              <button
+                className="btn"
+                type="button"
+                onClick={refreshFeed}
+                disabled={refreshing}
+              >
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+
+            {view === "briefing" && (
+              <section className="sidebarFilters">
+                <label className="control">
+                  <span className="controlLabel">Theme</span>
+                  <select
+                    className="select"
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value)}
+                  >
+                    {themes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="control">
+                  <span className="controlLabel">Sort</span>
+                  <select
+                    className="select"
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as any)}
+                  >
+                    <option value="date">Newest</option>
+                    <option value="confidence">Confidence</option>
+                    <option value="rarity">Rarity</option>
+                  </select>
+                </label>
+              </section>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      <div className="themeDock">
+        <div className={`themeSwitch ${uiTheme}`} role="group" aria-label="Theme toggle">
+          <span className="themeBlob" aria-hidden="true" />
+          <button
+            className="tabBtn themeToggleBtn"
+            type="button"
+            onClick={() => setUiTheme("dark")}
+            aria-label="Enable dark mode"
+            title="Dark mode"
+          >
+            <svg
+              className="themeIcon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 1 0 9.8 9.8Z" />
+            </svg>
+          </button>
+          <button
+            className="tabBtn themeToggleBtn"
+            type="button"
+            onClick={() => setUiTheme("light")}
+            aria-label="Enable light mode"
+            title="Light mode"
+          >
+            <svg
+              className="themeIcon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v3M12 19v3M22 12h-3M5 12H2M19.07 4.93l-2.12 2.12M7.05 16.95l-2.12 2.12M19.07 19.07l-2.12-2.12M7.05 7.05 4.93 4.93" />
+            </svg>
+          </button>
         </div>
-      )}
+      </div>
 
       {selected && (
-        <div className="drawerOverlay" onClick={() => setSelected(null)}>
+        <div
+          className={`drawerOverlay ${isDrawerClosing ? "closing" : ""}`}
+          onClick={closeDrawer}
+        >
           <aside className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawerHeader">
               <div>
                 <div className="drawerMeta">
-                  {selected.theme} • {selected.rarity} • {selected.date}
+                  {selected.theme} •{" "}
+                  <span className={`rarity rarity-${rarityTone(selected.rarity)}`}>
+                    <span className="rarityDot" aria-hidden="true" />
+                    {selected.rarity}
+                  </span>{" "}
+                  • {selected.date}
                 </div>
                 <h2 className="drawerTitle">{selected.title}</h2>
               </div>
-              <button className="drawerClose" onClick={() => setSelected(null)} type="button">
+              <button className="drawerClose" onClick={closeDrawer} type="button">
                 ✕
               </button>
             </div>
 
             <p className="drawerSummary">{selected.summary}</p>
+
+            <section className="drawerBrief">
+              <div className="drawerSectionLabel">Key Takeaways</div>
+              <ul className="drawerPoints">
+                {drawerHighlights.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="drawerFacts">
+              <div className="drawerFact">
+                <span className="drawerFactLabel">Source</span>
+                <span className="drawerFactValue">{selected.source}</span>
+              </div>
+              <div className="drawerFact">
+                <span className="drawerFactLabel">Theme</span>
+                <span className="drawerFactValue">{selected.theme}</span>
+              </div>
+              <div className="drawerFact">
+                <span className="drawerFactLabel">Confidence</span>
+                <span className="drawerFactValue">{Math.round(selected.confidence * 100)}%</span>
+              </div>
+            </section>
 
             <div className="drawerActions">
               <button
