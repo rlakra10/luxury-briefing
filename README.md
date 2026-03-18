@@ -42,14 +42,22 @@ Luxury Briefing is a full-stack luxury-intelligence demo: a feed of scored marke
 - `backend/` — FastAPI app, models, ingest, event scraping
 - `docker-compose.yml` — local container stack
 
+## Prerequisites
+
+- Node.js 18+
+- Python 3.11+
+- Docker Desktop or a local PostgreSQL instance
+- `npm` available in the shell
+
 ## Run Locally
 
 ### Option A: Local Backend + Docker Postgres
 
+From the repository root:
+
 1. Start Postgres:
 
 ```bash
-cd luxury-briefing
 docker compose up -d db
 ```
 
@@ -57,29 +65,41 @@ docker compose up -d db
 
 ```bash
 cd backend
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-3. Start frontend:
+If a virtual environment already exists, activate that instead of creating a new one.
+
+3. In a second terminal, start frontend:
 
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-4. Open:
+4. Open the local URL printed by Vite in the terminal.
+
+This is usually:
 
 ```text
 http://127.0.0.1:5173
 ```
 
+but it may differ if that port is already in use.
+
 ### Option B: Full Docker
 
+From the repository root:
+
 ```bash
-cd luxury-briefing
 docker compose up --build
 ```
+
+Then open the frontend URL exposed by the compose stack on your machine.
 
 ## Enrichment Workflow
 
@@ -98,6 +118,8 @@ If you change ingest logic or add new signal fields, restart the backend and re-
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/ingest"
 ```
+
+If the API is running on a different host or port, use that base URL instead.
 
 ## API Endpoints
 
@@ -119,3 +141,4 @@ curl -sS -X POST "http://127.0.0.1:8000/ingest"
   - `Aging`: 15-30 days
   - `Stale`: 31+ days
 - Existing databases are updated on backend startup with the required signal columns.
+- If you run the backend locally, make sure the frontend points at the correct API base URL via `VITE_API_BASE` when needed.
