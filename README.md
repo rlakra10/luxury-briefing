@@ -49,14 +49,14 @@ Luxury Briefing is a full-stack luxury-intelligence demo: a feed of scored marke
 1. Start Postgres:
 
 ```bash
-cd /Users/rishabhlakra/Projects/luxury-briefing
+cd luxury-briefing
 docker compose up -d db
 ```
 
 2. Start backend:
 
 ```bash
-cd /Users/rishabhlakra/Projects/luxury-briefing/backend
+cd backend
 source .venv/bin/activate
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -64,7 +64,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 3. Start frontend:
 
 ```bash
-cd /Users/rishabhlakra/Projects/luxury-briefing/frontend
+cd frontend
 npm run dev
 ```
 
@@ -77,7 +77,7 @@ http://127.0.0.1:5173
 ### Option B: Full Docker
 
 ```bash
-cd /Users/rishabhlakra/Projects/luxury-briefing
+cd luxury-briefing
 docker compose up --build
 ```
 
