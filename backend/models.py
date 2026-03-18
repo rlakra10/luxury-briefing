@@ -1,4 +1,4 @@
-from sqlalchemy import String, Float, Date
+from sqlalchemy import String, Float, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from db import Base
 from sqlalchemy import DateTime, func
@@ -13,7 +13,12 @@ class Signal(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     date: Mapped[str] = mapped_column(String, nullable=False)  # keep as string for MVP
     summary: Mapped[str] = mapped_column(String, nullable=False)
+    briefing_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    key_points_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    entities_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     source: Mapped[str] = mapped_column(String, nullable=False)
+    freshness_status: Mapped[str] = mapped_column(String, nullable=False, default="fresh")
+    freshness_age_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     url: Mapped[str] = mapped_column(String, nullable=False, default="")
 
 

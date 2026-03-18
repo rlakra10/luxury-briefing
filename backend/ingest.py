@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 from datetime import date, datetime
 from html import unescape
@@ -73,6 +74,17 @@ STOPWORDS = {
     "the",
     "to",
     "with",
+}
+
+ENTITY_STOPWORDS = STOPWORDS | {
+    "luxury",
+    "daily",
+    "google",
+    "news",
+    "marketing",
+    "finance",
+    "design",
+    "brands",
 }
 
 
@@ -171,6 +183,130 @@ def _extract_keywords(text: str, limit: int = 2) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def _title_cased_entities(text: str, limit: int = 4) -> list[str]:
+    seen: list[str] = []
+    candidates = re.findall(r"\b(?:[A-Z][a-z0-9&.-]+(?:\s+[A-Z][a-z0-9&.-]+){0,2})\b", text or "")
+    for candidate in candidates:
+        value = candidate.strip(" .,;:-")
+        lower = value.lower()
+        if len(value) < 3 or lower in ENTITY_STOPWORDS:
+            continue
+        if value not in seen:
+            seen.append(value)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def _fallback_entities(text: str, limit: int = 4) -> list[str]:
+    seen: list[str] = []
+    for token in _WORD_RE.findall((text or "").lower()):
+        if len(token) < 4 or token in ENTITY_STOPWORDS:
+            continue
+        label = token.replace("-", " ")
+        label = " ".join(part.capitalize() for part in label.split())
+        if label not in seen:
+            seen.append(label)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def _extract_entities(title: str, summary: str, source_name: str) -> list[str]:
+    merged = " ".join(part for part in [title, summary, source_name] if part)
+    entities = _title_cased_entities(merged, limit=5)
+    if len(entities) < 3:
+        for entity in _fallback_entities(merged, limit=5):
+            if entity not in entities:
+                entities.append(entity)
+            if len(entities) >= 5:
+                break
+    return entities[:5]
+
+
+def _freshness_details(iso_date: str) -> tuple[str, int]:
+    try:
+        parsed = datetime.strptime(iso_date, "%Y-%m-%d").date()
+    except Exception:
+        return ("aging", 999)
+
+    age_days = max(0, (date.today() - parsed).days)
+    if age_days <= 3:
+        return ("fresh", age_days)
+    if age_days <= 14:
+        return ("recent", age_days)
+    if age_days <= 30:
+        return ("aging", age_days)
+    return ("stale", age_days)
+
+
+def _briefing_summary(
+    title: str,
+    raw_summary: str,
+    theme: str,
+    entities: list[str],
+    confidence: float,
+    freshness_status: str,
+) -> str:
+    keywords = _extract_keywords(f"{title} {raw_summary}", limit=3)
+    focus = ", ".join(entities[:2] or keywords[:2])
+    confidence_pct = int(round(confidence * 100))
+
+    impact_by_theme = {
+        "Marketing": "brand attention and campaign positioning",
+        "Finance": "capital flow and pricing confidence",
+        "Design": "product direction and desirability",
+    }
+    impact = impact_by_theme.get(theme, "reputation and client attention")
+
+    freshness_line = {
+        "fresh": "The timing is current enough to act on directly.",
+        "recent": "The timing is still actionable but should be watched against newer signals.",
+        "aging": "The timing is starting to decay, so it matters mainly as supporting context.",
+        "stale": "The source is materially dated, so this should be treated as background context only.",
+    }[freshness_status]
+
+    if focus:
+        lead = f"This brief centers on {focus}, with likely consequences for {impact}."
+    else:
+        lead = f"This brief signals a development with likely consequences for {impact}."
+
+    return _truncate_words(f"{lead} Confidence is {confidence_pct}%. {freshness_line}", 34)
+
+
+def _build_key_points(
+    title: str,
+    raw_summary: str,
+    theme: str,
+    rarity: str,
+    confidence: float,
+    freshness_status: str,
+    age_days: int,
+    entities: list[str],
+) -> list[str]:
+    keywords = _extract_keywords(f"{title} {raw_summary}", limit=3)
+    focus = ", ".join(entities[:3] or keywords[:3])
+    impact_by_theme = {
+        "Marketing": "Watch for movement in campaign spend, reach, and brand narrative.",
+        "Finance": "Watch for downstream movement in valuation, liquidity, and appetite for premium assets.",
+        "Design": "Watch for influence on product language, materials, and desirability cues.",
+    }
+    freshness_line = {
+        "fresh": f"Published {age_days} day{'s' if age_days != 1 else ''} ago, so the signal is still timely.",
+        "recent": f"Published {age_days} days ago, so it remains usable but should be compared with newer coverage.",
+        "aging": f"Published {age_days} days ago, so it is better as context than as a lead indicator.",
+        "stale": f"Published {age_days} days ago, which makes this a stale source signal.",
+    }[freshness_status]
+
+    points = [
+        f"Primary focus: {focus}." if focus else "Primary focus: a concentrated luxury-market move.",
+        impact_by_theme.get(theme, "Watch for movement in demand, reputation, and client attention."),
+        f"Scoring: {int(round(confidence * 100))}% confidence and {rarity.lower()} rarity.",
+        freshness_line,
+    ]
+    return [_truncate_words(point, 22) for point in points]
 
 
 def _small_ai_blurb(title: str, raw_summary: str, theme: str) -> str:
@@ -336,6 +472,28 @@ def ingest_rss(db: Session, per_feed_limit: int = 12) -> dict[str, Any]:
 
             confidence = _compute_confidence(title, raw_summary, source_name, iso_date)
             rarity = _classify_rarity(confidence, title, raw_summary)
+            entities = _extract_entities(title, raw_summary, source_name)
+            freshness_status, freshness_age_days = _freshness_details(iso_date)
+            briefing_summary = _briefing_summary(
+                title,
+                raw_summary,
+                theme,
+                entities,
+                confidence,
+                freshness_status,
+            )
+            key_points = _build_key_points(
+                title,
+                raw_summary,
+                theme,
+                rarity,
+                confidence,
+                freshness_status,
+                freshness_age_days,
+                entities,
+            )
+            key_points_json = json.dumps(key_points)
+            entities_json = json.dumps(entities)
 
             # Skip if already exists (by id) OR if same URL already inserted
             existing_by_id = db.get(Signal, signal_id)
@@ -346,7 +504,12 @@ def ingest_rss(db: Session, per_feed_limit: int = 12) -> dict[str, Any]:
                 existing_by_id.confidence = confidence
                 existing_by_id.date = iso_date
                 existing_by_id.summary = summary or "No summary available."
+                existing_by_id.briefing_summary = briefing_summary
+                existing_by_id.key_points_json = key_points_json
+                existing_by_id.entities_json = entities_json
                 existing_by_id.source = source_name
+                existing_by_id.freshness_status = freshness_status
+                existing_by_id.freshness_age_days = freshness_age_days
                 existing_by_id.url = link or ""
                 updated += 1
                 continue
@@ -360,7 +523,12 @@ def ingest_rss(db: Session, per_feed_limit: int = 12) -> dict[str, Any]:
                     existing_by_url.confidence = confidence
                     existing_by_url.date = iso_date
                     existing_by_url.summary = summary or "No summary available."
+                    existing_by_url.briefing_summary = briefing_summary
+                    existing_by_url.key_points_json = key_points_json
+                    existing_by_url.entities_json = entities_json
                     existing_by_url.source = source_name
+                    existing_by_url.freshness_status = freshness_status
+                    existing_by_url.freshness_age_days = freshness_age_days
                     existing_by_url.url = link
                     updated += 1
                     continue
@@ -373,7 +541,12 @@ def ingest_rss(db: Session, per_feed_limit: int = 12) -> dict[str, Any]:
                 confidence=confidence,
                 date=iso_date,
                 summary=summary or "No summary available.",
+                briefing_summary=briefing_summary,
+                key_points_json=key_points_json,
+                entities_json=entities_json,
                 source=source_name,
+                freshness_status=freshness_status,
+                freshness_age_days=freshness_age_days,
                 url=link or "",
             )
 

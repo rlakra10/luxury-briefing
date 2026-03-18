@@ -9,7 +9,12 @@ type Signal = {
   confidence: number;
   date: string;
   summary: string;
+  briefing_summary: string;
+  key_points: string[];
+  entities: string[];
   source: string;
+  freshness_status?: "fresh" | "recent" | "aging" | "stale";
+  freshness_age_days?: number;
   url: string;
 };
 
@@ -62,7 +67,7 @@ function extractKeywords(text: string, limit = 2) {
     .map(([word]) => word);
 }
 
-function buildDrawerHighlights(signal: Signal) {
+function buildFallbackKeyPoints(signal: Signal) {
   const terms = extractKeywords(`${signal.title} ${signal.summary}`);
   const lead = terms.length
     ? `${terms.join(" / ")} are the dominant signals in this piece.`
@@ -87,6 +92,33 @@ function buildDrawerHighlights(signal: Signal) {
     `Confidence context: ${Math.round(signal.confidence * 100)}% confidence from current signal scoring.`,
     rarityLine,
   ];
+}
+
+function computeFreshness(signal: Signal): { status: "fresh" | "recent" | "aging" | "stale"; ageDays: number } {
+  const parsed = new Date(`${signal.date}T00:00:00`);
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const ageDays = Number.isNaN(parsed.getTime())
+    ? 999
+    : Math.max(
+        0,
+        Math.floor(
+          (todayUtc - Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate())) / 86400000
+        )
+      );
+
+  if (ageDays <= 3) return { status: "fresh", ageDays };
+  if (ageDays <= 14) return { status: "recent", ageDays };
+  if (ageDays <= 30) return { status: "aging", ageDays };
+  return { status: "stale", ageDays };
+}
+
+function freshnessLabel(signal: Signal) {
+  const freshness = computeFreshness(signal);
+  if (freshness.status === "fresh") return "Fresh";
+  if (freshness.status === "recent") return `Recent · ${freshness.ageDays}d`;
+  if (freshness.status === "aging") return `Aging · ${freshness.ageDays}d`;
+  return `Stale · ${freshness.ageDays}d`;
 }
 
 export default function App() {
@@ -208,6 +240,12 @@ export default function App() {
     if (subView === "events") loadEvents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subView]);
+
+  const drawerPoints = useMemo(() => {
+    if (!selected) return [];
+    if (selected.key_points?.length) return selected.key_points;
+    return buildFallbackKeyPoints(selected);
+  }, [selected]);
 
   useEffect(() => {
     fetch(`${API_BASE}/themes`)
@@ -335,11 +373,6 @@ export default function App() {
     return Array.from(map.values()).sort(byDate).slice(0, 10);
   }, [events, tab]);
 
-  const drawerHighlights = useMemo(
-    () => (selected ? buildDrawerHighlights(selected) : []),
-    [selected]
-  );
-
   return (
     <div
       className={`page state-${view} tab-${tab} subview-${subView}${selected ? " drawer-open" : ""}`}
@@ -435,6 +468,7 @@ export default function App() {
                 const isSaved = savedIds.has(s.id);
                 const busy = savingId === s.id;
                 const tone = rarityTone(s.rarity);
+                const freshness = computeFreshness(s);
 
                 return (
                   <article
@@ -457,6 +491,10 @@ export default function App() {
                         <span className={`rarity rarity-${rarityTone(s.rarity)}`}>
                           <span className="rarityDot" aria-hidden="true" />
                           {s.rarity}
+                        </span>
+                        <span className="dot">•</span>
+                        <span className={`freshness freshness-${freshness.status}`}>
+                          {freshnessLabel(s)}
                         </span>
                         <span className="dot">•</span>
                         <span>{s.date}</span>
@@ -671,12 +709,12 @@ export default function App() {
               </button>
             </div>
 
-            <p className="drawerSummary">{selected.summary}</p>
+            <p className="drawerSummary">{selected.briefing_summary || selected.summary}</p>
 
             <section className="drawerBrief">
               <div className="drawerSectionLabel">Key Takeaways</div>
               <ul className="drawerPoints">
-                {drawerHighlights.map((point) => (
+                {drawerPoints.map((point) => (
                   <li key={point}>{point}</li>
                 ))}
               </ul>
@@ -695,7 +733,26 @@ export default function App() {
                 <span className="drawerFactLabel">Confidence</span>
                 <span className="drawerFactValue">{Math.round(selected.confidence * 100)}%</span>
               </div>
+              <div className="drawerFact">
+                <span className="drawerFactLabel">Freshness</span>
+                <span className={`drawerFactValue freshness freshness-${computeFreshness(selected).status}`}>
+                  {freshnessLabel(selected)}
+                </span>
+              </div>
             </section>
+
+            {!!selected.entities?.length && (
+              <section className="drawerBrief">
+                <div className="drawerSectionLabel">Entities</div>
+                <div className="drawerEntities">
+                  {selected.entities.map((entity) => (
+                    <span className="entityChip" key={entity}>
+                      {entity}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <div className="drawerActions">
               <button
@@ -722,9 +779,9 @@ export default function App() {
                 className="linkBtn"
                 type="button"
                 onClick={() => {
-                  const text = `${selected.title}\n\n${selected.summary}\n\nTheme: ${selected.theme
-                    }\nConfidence: ${Math.round(selected.confidence * 100)}%\nSource: ${selected.source
-                    }\n${selected.url ? `URL: ${selected.url}` : ""}`;
+                  const text = `${selected.title}\n\n${selected.briefing_summary || selected.summary}\n\nKey Takeaways:\n- ${selected.key_points.join("\n- ")}\n\nTheme: ${selected.theme
+                    }\nConfidence: ${Math.round(selected.confidence * 100)}%\nFreshness: ${freshnessLabel(selected)}\nSource: ${selected.source
+                    }\n${selected.entities.length ? `Entities: ${selected.entities.join(", ")}\n` : ""}${selected.url ? `URL: ${selected.url}` : ""}`;
                   navigator.clipboard.writeText(text);
                 }}
               >
